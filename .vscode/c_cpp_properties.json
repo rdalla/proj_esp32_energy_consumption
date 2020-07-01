@@ -6,12 +6,10 @@
         {
             "name": "Win32",
             "includePath": [
-                "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/include",
-                "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/src",
-                "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/.pio/libdeps/esp32doit-devkit-v1/DHT22 C_C__ library for ESP32 _ESP-IDF__ID5632/include",
-                "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/.pio/libdeps/esp32doit-devkit-v1/DHT22 C_C__ library for ESP32 _ESP-IDF__ID5632/src",
+                "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/include",
+                "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/src",
                 "C:/Users/Usuario/.platformio/packages/framework-espidf/components/esp_ringbuf/include",
-                "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/.pio/build/esp32doit-devkit-v1/config",
+                "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/.pio/build/esp32doit-devkit-v1/config",
                 "C:/Users/Usuario/.platformio/packages/framework-espidf/components/newlib/platform_include",
                 "C:/Users/Usuario/.platformio/packages/framework-espidf/components/freertos/include",
                 "C:/Users/Usuario/.platformio/packages/framework-espidf/components/heap/include",
@@ -98,12 +96,10 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/include",
-                    "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/src",
-                    "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/.pio/libdeps/esp32doit-devkit-v1/DHT22 C_C__ library for ESP32 _ESP-IDF__ID5632/include",
-                    "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/.pio/libdeps/esp32doit-devkit-v1/DHT22 C_C__ library for ESP32 _ESP-IDF__ID5632/src",
+                    "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/include",
+                    "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/src",
                     "C:/Users/Usuario/.platformio/packages/framework-espidf/components/esp_ringbuf/include",
-                    "C:/Users/Usuario/Documents/PlatformIO/Projects/ESP32_IoT_IDF/.pio/build/esp32doit-devkit-v1/config",
+                    "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/.pio/build/esp32doit-devkit-v1/config",
                     "C:/Users/Usuario/.platformio/packages/framework-espidf/components/newlib/platform_include",
                     "C:/Users/Usuario/.platformio/packages/framework-espidf/components/freertos/include",
                     "C:/Users/Usuario/.platformio/packages/framework-espidf/components/heap/include",
@@ -196,6 +192,7 @@
                 "PLATFORMIO=40304",
                 "ARDUINO_ESP32_DEV",
                 "DEBUG_WATER_MARK",
+                "DONT_USE_UPLOADTOBLOB",
                 ""
             ],
             "intelliSenseMode": "clang-x64",
