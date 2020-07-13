@@ -14,9 +14,11 @@
 #include <esp_event_loop.h>
 #include <esp_log.h>
 #include <mqtt_client.h>
-#include <esp_adc_cal.h>
 #include "driver/adc.h"
 #include "driver/gpio.h"
+#if CONFIG_IDF_TARGET_ESP32
+#include "esp_adc_cal.h"
+#endif
 
 //Bibliotecas do FreeRTOS
 
@@ -40,9 +42,8 @@
 //#define GPIO_COMMAND_CTRL     18
 
 #define ID1                   "DallaValle_ESP32_LEITURA_SENSOR"
-
-/* Estrutura que contem as informacoes para calibracao */
-esp_adc_cal_characteristics_t adc_cal;
+#define DEFAULT_VREF          1100     //Use adc2_vref_to_gpio() to obtain a better estimate
+#define NO_OF_SAMPLES         64      //Multisampling
 
 /*handle do Semaforo*/
 //SemaphoreHandle_t xMutex = 0;
@@ -62,16 +63,80 @@ void vSensorTask(void *pvParameter);
 static const char *TAG = "MQTT_IOT";
 static const char *TAG1 = "TASK";
 static const char *TAG2 = "sensor";
-
+static const char *TAG3 = "ADC_ESP32";
 // MQTT
-const char* mqtt_server = "192.168.1.103";//IP do BBB MQTT broker
+const char* mqtt_server = "192.168.1.101";//IP do BBB MQTT broker
 const char* mqtt_username = "rdalla"; // MQTT username
 const char* mqtt_password = "vao1ca"; // MQTT password
-const char* clientID = "dallavalle"; // MQTT client ID
+const char* clientID = "DallaValleESP32"; // MQTT client ID
 const char *topic_mqtt_cmd = "/home/command";///currentmonitor";
-const char *topic_mqtt_data = "/home";//airconditioning/currentmonitor";
-//const char* temperature_topic = "home/livingroom/temperature";
+//const char *topic_mqtt_data = "/home";//airconditioning/currentmonitor";
+const char* irms_topic = "home/sensor/irms";
+const char* kwh_topic = "home/sensor/kwh";
+const char* cost_topic = "home/sensor/cost";
 char mqtt_buffer[128];
+
+//const char* temperature_topic = "home/livingroom/temperature";
+
+/* estrutura de dados para o sensor */
+typedef struct sensor {
+    double irms;
+    float kwh;
+    float cost;
+} sensor_t;
+
+
+#if CONFIG_IDF_TARGET_ESP32
+static esp_adc_cal_characteristics_t *adc_chars;
+static const adc_channel_t channel = ADC_CHANNEL_6; //GPIO34 if ADC1, GPIO14 if ADC2
+static const adc_bits_width_t width = ADC_WIDTH_BIT_12;
+#elif CONFIG_IDF_TARGET_ESP32S2
+static const adc_channel_t channel = ADC_CHANNEL_6; // GPIO7 if ADC1, GPIO17 if ADC2
+static const adc_bits_width_t width = ADC_WIDTH_BIT_13;
+#endif
+static const adc_atten_t atten = ADC_ATTEN_DB_0;
+static const adc_unit_t unit = ADC_UNIT_1;
+
+#if CONFIG_IDF_TARGET_ESP32
+static void check_efuse(void)
+{
+  //Check TP is burned into eFuse
+  if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK)
+  {
+    ESP_LOGI(TAG3, "eFuse Two Point: Supported\n");
+  }
+  else
+  {
+    ESP_LOGI(TAG3, "eFuse Two Point: NOT supported\n");
+  }
+
+  //Check Vref is burned into eFuse
+  if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_VREF) == ESP_OK)
+  {
+    ESP_LOGI(TAG3, "eFuse Vref: Supported\n");
+  }
+  else
+  {
+    ESP_LOGI(TAG3, "eFuse Vref: NOT supported\n");
+  }
+}
+
+static void print_char_val_type(esp_adc_cal_value_t val_type)
+{
+  if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP)
+  {
+    ESP_LOGI(TAG3, "Characterized using Two Point Value\n");
+  }
+  else if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF)
+  {
+    ESP_LOGI(TAG3, "Characterized using eFuse Vref\n");
+  }
+  else
+  {
+    ESP_LOGI(TAG3, "Characterized using Default Vref\n");
+  }
+}
+#endif
 
 //Referencia para saber status de conexao
 static EventGroupHandle_t wifi_event_group;
@@ -87,20 +152,34 @@ esp_mqtt_client_handle_t mqtt_client;
 void vPublishTask(void *pvParameter)
 {
 
+  sensor_t sensorCurrent;
 
   while(1)
   {
 
-    ESP_LOGI(TAG, "Enviando dados para o topico %s...", topic_mqtt_data);
+    
 
-    if (!xQueueReceive(xSensor_Control, &mqtt_buffer, 3000))
+   if (!xQueueReceive(xSensor_Control, &sensorCurrent, 3000))
     {
       ESP_LOGI(TAG, "Falha ao receber o valor da fila xSensor_Control.\n");
     }
-
-
+    
+    //JSON FORMAT IF NECESSARY: "{\"current\":\"%lf\"}"
+	  
+    ESP_LOGI(TAG, "Enviando dados para o topico %s...", irms_topic);
     //Sanity check do mqtt_client antes de publicar
-    esp_mqtt_client_publish(mqtt_client, topic_mqtt_data, mqtt_buffer, 0, 0, 0);
+    snprintf(mqtt_buffer, sizeof(mqtt_buffer), "%lf", sensorCurrent.irms);
+    esp_mqtt_client_publish(mqtt_client, irms_topic, mqtt_buffer, 0, 0, 0);
+
+    ESP_LOGI(TAG, "Enviando dados para o topico %s...", kwh_topic);
+    //Sanity check do mqtt_client antes de publicar
+    snprintf(mqtt_buffer, sizeof(mqtt_buffer), "%f", sensorCurrent.kwh);
+    esp_mqtt_client_publish(mqtt_client, kwh_topic, mqtt_buffer, 0, 0, 0);
+
+    ESP_LOGI(TAG, "Enviando dados para o topico %s...", cost_topic);
+    //Sanity check do mqtt_client antes de publicar
+    snprintf(mqtt_buffer, sizeof(mqtt_buffer), "%f", sensorCurrent.cost);
+    esp_mqtt_client_publish(mqtt_client, cost_topic, mqtt_buffer, 0, 0, 0);
 
     vTaskDelay(5000 / portTICK_PERIOD_MS);
 
@@ -113,42 +192,71 @@ void vPublishTask(void *pvParameter)
 void vSensorTask(void *pvParameter)
 {
   
-  int msg = 0; //numero de mensagens
-  uint32_t adcValue = 0;
-  double irms = 0.0;
+  //int msg = 0; //numero de mensagens
+  //uint32_t adcValue = 0;
+  //double irms = 0.0;
   double current = 0.0;
 
-  ESP_LOGI(TAG, "Iniciando task leitura SCT013...");
+  sensor_t sensorCurrent;
 
+  ESP_LOGI(TAG, "Iniciando task leitura sensor SCT013 50A/1V...");
+
+	
   while (1)
   {
-    msg = msg + 1;
-    ESP_LOGI(TAG, "Lendo dados de Consumo de Corrente...\n");
-    
-    /*
-            Obtem a leitura RAW do ADC para depois ser utilizada pela API de calibracao
- 
-            Media simples de 100 leituras intervaladas com 30us
-        */
+    //msg = msg + 1;
+    ESP_LOGI(TAG, "Lendo dados de Consumo de Energia...\n");
 
-    for (int i = 0; i < 200; i++)
+    uint32_t adc_reading = 0;
+    //Multisampling
+    for (int i = 0; i < NO_OF_SAMPLES; i++)
     {
-      adcValue += adc1_get_raw(ADC1_CHANNEL_6); //Obtem o valor RAW do ADC
-      ets_delay_us(30);
+      if (unit == ADC_UNIT_1)
+      {
+        adc_reading += adc1_get_raw((adc1_channel_t)channel);
+      }
+      else
+      {
+        int raw;
+        adc2_get_raw((adc2_channel_t)channel, width, &raw);
+        adc_reading += raw;
+      }
     }
-    adcValue /= 200;
+    adc_reading /= NO_OF_SAMPLES;
+#if CONFIG_IDF_TARGET_ESP32
+    //Convert adc_reading to voltage in mV
+    uint32_t adcValue = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
+    printf("Raw: %d\tVoltage: %dmV\n", adc_reading, adcValue);
+    current = (((float)(adcValue) / (float)(4095)));
+    sensorCurrent.irms = current / sqrt(2);
+    sensorCurrent.kwh = 1.0;  //Colocar formula!!!
+    sensorCurrent.cost = 1.0; //Colocar formula!!!
 
-    adcValue = esp_adc_cal_raw_to_voltage(adcValue, &adc_cal); //Converte e calibra o valor lido (RAW) para mV
+#elif CONFIG_IDF_TARGET_ESP32S2
+    printf("ADC%d CH%d Raw: %d\t\n", unit, channel, adc_reading);
+#endif
+        vTaskDelay(pdMS_TO_TICKS(1000));
 
-    irms = (float)(adcValue / (float)(2047) * 30);
+    //   for (int i = 0; i < 100; i++)
+    //   {
+    //     adcValue += adc1_get_raw(ADC1_CHANNEL_6); //Obtem o valor RAW do ADC
+    //   ets_delay_us(30);
+    //}
+    //adcValue /= 100;
 
-    current = irms/sqrt(2);
+    //adcValue = esp_adc_cal_raw_to_voltage(adcValue, &adc_cal); //Converte e calibra o valor lido (RAW) para mV
+    //irms = (((float)(adcValue) / (float)(4095)));
+    
+    //current = (float)adcValue * ((float)1.65 / (float)4095); //converte para corrente baseado no sensor sct013 - 30A ::: 30A = 1V 2^12bit =4096
+    //current = current / (float) 50;
 
-    ESP_LOGI(TAG2, "Read Current Value: %lf", current);
+    //irms = current / sqrt(2);
 
-    snprintf(mqtt_buffer, 128, "{\"current\":\"%lf\"}", current);
+    //snprintf(mqtt_buffer, 128, "{\"current\":\"%lf\"}", irms);
 
-    if (!xQueueSend(xSensor_Control, &mqtt_buffer, 3000))
+    ESP_LOGI(TAG2, "Read IRMS Value: %lf (A) | kWh Value: %f (kWh) | Cost per kWh : R$ %f", sensorCurrent.irms, sensorCurrent.kwh, sensorCurrent.cost);
+
+    if (!xQueueSend(xSensor_Control, &sensorCurrent, 3000))
     {
       ESP_LOGI(TAG, "\nFalha ao enviar o valor para a fila xSensor_Control.\n");
     }
@@ -271,7 +379,7 @@ static void mqtt_init(void)
 {
   const esp_mqtt_client_config_t mqtt_cfg = {
       .event_handle = mqtt_event_handler,
-      .client_id = "dallavalle", //cada um use o seu!
+      .client_id = "DallaValleESP32",
       .username = mqtt_username,
       .password = mqtt_password,
       .host = mqtt_server,
@@ -297,28 +405,28 @@ void app_main()
   //gpio_pad_select_gpio(GPIO_COMMAND_CTRL);
   //gpio_set_direction(GPIO_COMMAND_CTRL, GPIO_MODE_INPUT);
 
-  //---------------------------------------------------------------------------
-  /*Configurando ADC1 CHANNEL 0 e CHANNEL 3*/
-  adc1_config_width(ADC_WIDTH_BIT_12);                        //Configura a resolucao
-  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11); //Configura a atenuacao (pino 34)
-  adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_11); //Configura a atenuacao (pino 35)
+#if CONFIG_IDF_TARGET_ESP32
+  //Check if Two Point or Vref are burned into eFuse
+  check_efuse();
+#endif
 
-  esp_adc_cal_value_t adc_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_cal); //Inicializa a estrutura de calibracao
-
-  if (adc_type == ESP_ADC_CAL_VAL_EFUSE_VREF)
+  //Configure ADC
+  if (unit == ADC_UNIT_1)
   {
-    ESP_LOGI("ADC CAL", "Vref eFuse encontrado: %umV", adc_cal.vref);
-  }
-  else if (adc_type == ESP_ADC_CAL_VAL_EFUSE_TP)
-  {
-    ESP_LOGI("ADC CAL", "Two Point eFuse encontrado");
+    adc1_config_width(width);
+    adc1_config_channel_atten(channel, atten);
   }
   else
   {
-    ESP_LOGW("ADC CAL", "Nada encontrado, utilizando Vref padrao: %umV", adc_cal.vref);
+    adc2_config_channel_atten((adc2_channel_t)channel, atten);
   }
-  
-  //---------------------------------------------------------------------------
+
+#if CONFIG_IDF_TARGET_ESP32
+  //Characterize ADC
+  adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
+  esp_adc_cal_value_t val_type = esp_adc_cal_characterize(unit, atten, width, DEFAULT_VREF, adc_chars);
+  print_char_val_type(val_type);
+#endif
 
   ESP_LOGI(TAG, "Iniciando ESP32 IoT App...");
   // Setup de logs de outros elementos
