@@ -16,9 +16,7 @@
 #include <mqtt_client.h>
 #include "driver/adc.h"
 #include "driver/gpio.h"
-#if CONFIG_IDF_TARGET_ESP32
 #include "esp_adc_cal.h"
-#endif
 
 //Bibliotecas do FreeRTOS
 
@@ -35,18 +33,63 @@
 #include <lwip\netdb.h>
 
 
-// Defines de referencia para o codigo
-//#define DHTPIN                4
-//#define DHTTYPE               DHT22
-//#define LED_CONNECTION_STATUS 2
-//#define GPIO_COMMAND_CTRL     18
-
 #define ID1                   "DallaValle_ESP32_LEITURA_SENSOR"
 #define DEFAULT_VREF          1100     //Use adc2_vref_to_gpio() to obtain a better estimate
 #define NO_OF_SAMPLES         64      //Multisampling
 
-/*handle do Semaforo*/
-//SemaphoreHandle_t xMutex = 0;
+#define ADC_BITS 12
+
+#define ADC_COUNTS (1 << ADC_BITS)
+
+//-----------------------------------------------------------------------
+//ESP32 ADC CONFIG
+
+#if CONFIG_IDF_TARGET_ESP32
+static esp_adc_cal_characteristics_t *adc_chars;
+static const adc_channel_t channel = ADC_CHANNEL_6; //GPIO34 if ADC1, GPIO14 if ADC2
+static const adc_bits_width_t width = ADC_WIDTH_BIT_12;
+#elif CONFIG_IDF_TARGET_ESP32S2
+static const adc_channel_t channel = ADC_CHANNEL_6; // GPIO7 if ADC1, GPIO17 if ADC2
+static const adc_bits_width_t width = ADC_WIDTH_BIT_13;
+#endif
+static const adc_atten_t atten = ADC_ATTEN_DB_11; //11 dB attenuation (ADC_ATTEN_DB_11) gives full-scale voltage 3.9 V (see note below)
+static const adc_unit_t unit = ADC_UNIT_1;
+//-----------------------------------------------------------------------
+
+//--------------------------------------------------------------------------------------
+// Variable declaration for emon_calc procedure
+//--------------------------------------------------------------------------------------
+int sampleV; //sample_ holds the raw analog read value
+int sampleI;
+
+double lastFilteredV, filteredV; //Filtered_ is the raw analog value minus the DC offset
+double filteredI;
+double offsetV; //Low-pass filter output
+double offsetI; //Low-pass filter output
+double Irms;
+double phaseShiftedV; //Holds the calibrated phase shifted voltage.
+
+double sqV, sumV, sqI, sumI, instP, sumP; //sq = squared, sum = Sum, inst = instantaneous
+float sumCost = 0.0;
+float costKwh = 0.0;
+
+int startV; //Instantaneous voltage at start of sample window.
+
+bool lastVCross, checkVCross; //Used to measure number of times threshold is crossed.
+
+//Set Voltage and current input pins
+unsigned int inPinV;
+unsigned int inPinI;
+unsigned int samples;
+
+//Calibration coefficients
+//These need to be set in order to obtain accurate results
+double VCAL;
+double ICAL;
+double PHASECAL;
+
+void currentCalibration(double _ICAL);
+double getIrms(int NUMBER_OF_SAMPLES);
 
 /*handle do Queue*/
 QueueHandle_t xSensor_Control = 0;
@@ -70,13 +113,11 @@ const char* mqtt_username = "rdalla"; // MQTT username
 const char* mqtt_password = "vao1ca"; // MQTT password
 const char* clientID = "DallaValleESP32"; // MQTT client ID
 const char *topic_mqtt_cmd = "/home/command";///currentmonitor";
-//const char *topic_mqtt_data = "/home";//airconditioning/currentmonitor";
 const char* irms_topic = "home/sensor/irms";
 const char* kwh_topic = "home/sensor/kwh";
 const char* cost_topic = "home/sensor/cost";
 char mqtt_buffer[128];
 
-//const char* temperature_topic = "home/livingroom/temperature";
 
 /* estrutura de dados para o sensor */
 typedef struct sensor {
@@ -85,17 +126,6 @@ typedef struct sensor {
     float cost;
 } sensor_t;
 
-
-#if CONFIG_IDF_TARGET_ESP32
-static esp_adc_cal_characteristics_t *adc_chars;
-static const adc_channel_t channel = ADC_CHANNEL_6; //GPIO34 if ADC1, GPIO14 if ADC2
-static const adc_bits_width_t width = ADC_WIDTH_BIT_12;
-#elif CONFIG_IDF_TARGET_ESP32S2
-static const adc_channel_t channel = ADC_CHANNEL_6; // GPIO7 if ADC1, GPIO17 if ADC2
-static const adc_bits_width_t width = ADC_WIDTH_BIT_13;
-#endif
-static const adc_atten_t atten = ADC_ATTEN_DB_0;
-static const adc_unit_t unit = ADC_UNIT_1;
 
 #if CONFIG_IDF_TARGET_ESP32
 static void check_efuse(void)
@@ -145,6 +175,45 @@ const static int CONNECTION_STATUS = BIT0;
 //Cliente MQTT
 esp_mqtt_client_handle_t mqtt_client;
 
+void currentCalibration(double _ICAL)
+{
+  ICAL = _ICAL;
+  offsetI = ADC_COUNTS >> 1;
+}
+
+double getIrms(int NUMBER_OF_SAMPLES)
+{
+  samples = NUMBER_OF_SAMPLES;
+  int SupplyVoltage = 3300; //3V3 power supply ESP32
+
+  sampleI = 0;
+
+  for (unsigned int n = 0; n < samples; n++)
+  {
+    sampleI = adc1_get_raw((adc1_channel_t)channel);
+
+    // Digital low pass filter extracts the 2.5 V or 1.65 V dc offset,
+    // then subtract this - signal is now centered on 0 counts.
+    offsetI = (offsetI + (sampleI - offsetI) / ADC_COUNTS);
+    filteredI = sampleI - offsetI;
+
+    // Root-mean-square method current
+    // 1) square current values
+    sqI = filteredI * filteredI;
+    // 2) sum
+    sumI += sqI;
+  }
+
+  double I_RATIO = ICAL * ((SupplyVoltage / 1000.0) / (ADC_COUNTS));
+  Irms = I_RATIO * sqrt(sumI / samples);
+
+  //Reset accumulators
+  sumI = 0;
+  //--------------------------------------------------------------------------------------
+
+  return Irms;
+}
+
 //---------------------------------------------------------------------------
 //Espaco para criacao de tasks para o FreeRTOS
 
@@ -191,68 +260,36 @@ void vPublishTask(void *pvParameter)
 /* Task do sensor SCT013 */
 void vSensorTask(void *pvParameter)
 {
-  
-  //int msg = 0; //numero de mensagens
-  //uint32_t adcValue = 0;
-  //double irms = 0.0;
-  double current = 0.0;
 
   sensor_t sensorCurrent;
-
+  currentCalibration(20);
   ESP_LOGI(TAG, "Iniciando task leitura sensor SCT013 50A/1V...");
+  int adjust = 0;
 
-	
   while (1)
   {
-    //msg = msg + 1;
+
     ESP_LOGI(TAG, "Lendo dados de Consumo de Energia...\n");
 
-    uint32_t adc_reading = 0;
-    //Multisampling
-    for (int i = 0; i < NO_OF_SAMPLES; i++)
+    while (adjust < 20)
     {
-      if (unit == ADC_UNIT_1)
-      {
-        adc_reading += adc1_get_raw((adc1_channel_t)channel);
-      }
-      else
-      {
-        int raw;
-        adc2_get_raw((adc2_channel_t)channel, width, &raw);
-        adc_reading += raw;
-      }
+      sensorCurrent.irms = getIrms(1480);
+      adjust++;
     }
-    adc_reading /= NO_OF_SAMPLES;
-#if CONFIG_IDF_TARGET_ESP32
-    //Convert adc_reading to voltage in mV
-    uint32_t adcValue = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
-    printf("Raw: %d\tVoltage: %dmV\n", adc_reading, adcValue);
-    current = (((float)(adcValue) / (float)(4095)));
-    sensorCurrent.irms = current / sqrt(2);
-    sensorCurrent.kwh = 1.0;  //Colocar formula!!!
-    sensorCurrent.cost = 1.0; //Colocar formula!!!
-
-#elif CONFIG_IDF_TARGET_ESP32S2
-    printf("ADC%d CH%d Raw: %d\t\n", unit, channel, adc_reading);
-#endif
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-    //   for (int i = 0; i < 100; i++)
-    //   {
-    //     adcValue += adc1_get_raw(ADC1_CHANNEL_6); //Obtem o valor RAW do ADC
-    //   ets_delay_us(30);
-    //}
-    //adcValue /= 100;
-
-    //adcValue = esp_adc_cal_raw_to_voltage(adcValue, &adc_cal); //Converte e calibra o valor lido (RAW) para mV
-    //irms = (((float)(adcValue) / (float)(4095)));
     
-    //current = (float)adcValue * ((float)1.65 / (float)4095); //converte para corrente baseado no sensor sct013 - 30A ::: 30A = 1V 2^12bit =4096
-    //current = current / (float) 50;
-
-    //irms = current / sqrt(2);
-
-    //snprintf(mqtt_buffer, 128, "{\"current\":\"%lf\"}", irms);
+    ESP_LOGI(TAG, "Calculando a corrente Irms...\n");
+    sensorCurrent.irms = getIrms(1480);
+    
+    //Consumed = (Pot[W]/1000) x hours...(5seg/3600)= 0,00138889 hour
+    ESP_LOGI(TAG, "Calculando KWh Consumido...\n");
+    sensorCurrent.kwh = (float)(((sensorCurrent.irms * 127.0) / 1000.0) * (0.00138889)); 
+   
+    //Com o reajuste de 2020, preço por kWh na CPFL Paulista é em torno de R$ 0,85 por kWh para a tarifa residencial
+    ESP_LOGI(TAG, "Calculando Custo por KWh Consumido...\n");
+    //sensorCurrent.cost = sensorCurrent.kwh * 0.85;
+    costKwh = sensorCurrent.kwh * 0.85;
+    sumCost += costKwh;
+    sensorCurrent.cost = sumCost;
 
     ESP_LOGI(TAG2, "Read IRMS Value: %lf (A) | kWh Value: %f (kWh) | Cost per kWh : R$ %f", sensorCurrent.irms, sensorCurrent.kwh, sensorCurrent.cost);
 
@@ -397,13 +434,6 @@ static void mqtt_init(void)
 
 void app_main()
 {
-  /*Configurando LED como saida*/
-  //gpio_pad_select_gpio(LED_CONNECTION_STATUS);
-  //gpio_set_direction(LED_CONNECTION_STATUS, GPIO_MODE_INPUT_OUTPUT); //GPIO_MODE_INPUT_OUTPUT , para possibilitar leitura do estado do LED
-
-  /*Configurando botao como entrada*/
-  //gpio_pad_select_gpio(GPIO_COMMAND_CTRL);
-  //gpio_set_direction(GPIO_COMMAND_CTRL, GPIO_MODE_INPUT);
 
 #if CONFIG_IDF_TARGET_ESP32
   //Check if Two Point or Vref are burned into eFuse
@@ -416,10 +446,6 @@ void app_main()
     adc1_config_width(width);
     adc1_config_channel_atten(channel, atten);
   }
-  else
-  {
-    adc2_config_channel_atten((adc2_channel_t)channel, atten);
-  }
 
 #if CONFIG_IDF_TARGET_ESP32
   //Characterize ADC
@@ -429,12 +455,10 @@ void app_main()
 #endif
 
   ESP_LOGI(TAG, "Iniciando ESP32 IoT App...");
+ 
   // Setup de logs de outros elementos
   esp_log_level_set("*", ESP_LOG_INFO);
   esp_log_level_set("MQTT_CLIENT", ESP_LOG_VERBOSE);
-
-  /* Inicializacao de ponteiros de dados JSON */
-  //printed_sensor = malloc(100 * sizeof(int32_t));
 
   // Inicializacao da NVS = Non-Volatile-Storage (NVS)
   esp_err_t ret = nvs_flash_init();
