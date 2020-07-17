@@ -120,12 +120,11 @@ char mqtt_buffer[128];
 
 
 /* estrutura de dados para o sensor */
-typedef struct sensor {
+struct sensor {
     double irms;
     float kwh;
     float cost;
-} sensor_t;
-
+} sensorCurrent;
 
 #if CONFIG_IDF_TARGET_ESP32
 static void check_efuse(void)
@@ -179,6 +178,15 @@ void currentCalibration(double _ICAL)
 {
   ICAL = _ICAL;
   offsetI = ADC_COUNTS >> 1;
+  int adjust = 0;
+  
+  while (adjust < 20)
+  {
+    getIrms(1480);
+    adjust++;
+
+  }
+
 }
 
 double getIrms(int NUMBER_OF_SAMPLES)
@@ -221,37 +229,34 @@ double getIrms(int NUMBER_OF_SAMPLES)
 void vPublishTask(void *pvParameter)
 {
 
-  sensor_t sensorCurrent;
+  struct sensor sensorReceived;
 
   while(1)
   {
 
-    
-
-   if (!xQueueReceive(xSensor_Control, &sensorCurrent, 3000))
+    if (!xQueueReceive(xSensor_Control, (void *)&sensorReceived, 3000))
     {
       ESP_LOGI(TAG, "Falha ao receber o valor da fila xSensor_Control.\n");
     }
     
     //JSON FORMAT IF NECESSARY: "{\"current\":\"%lf\"}"
-	  
+
     ESP_LOGI(TAG, "Enviando dados para o topico %s...", irms_topic);
     //Sanity check do mqtt_client antes de publicar
-    snprintf(mqtt_buffer, sizeof(mqtt_buffer), "%lf", sensorCurrent.irms);
+    snprintf(mqtt_buffer, 128, "%lf", sensorReceived.irms);
     esp_mqtt_client_publish(mqtt_client, irms_topic, mqtt_buffer, 0, 0, 0);
 
     ESP_LOGI(TAG, "Enviando dados para o topico %s...", kwh_topic);
     //Sanity check do mqtt_client antes de publicar
-    snprintf(mqtt_buffer, sizeof(mqtt_buffer), "%f", sensorCurrent.kwh);
+    snprintf(mqtt_buffer, 128, "%f", sensorReceived.kwh);
     esp_mqtt_client_publish(mqtt_client, kwh_topic, mqtt_buffer, 0, 0, 0);
 
     ESP_LOGI(TAG, "Enviando dados para o topico %s...", cost_topic);
     //Sanity check do mqtt_client antes de publicar
-    snprintf(mqtt_buffer, sizeof(mqtt_buffer), "%f", sensorCurrent.cost);
+    snprintf(mqtt_buffer, 128, "%f", sensorReceived.cost);
     esp_mqtt_client_publish(mqtt_client, cost_topic, mqtt_buffer, 0, 0, 0);
 
     vTaskDelay(5000 / portTICK_PERIOD_MS);
-
   }
 }
 
@@ -261,22 +266,17 @@ void vPublishTask(void *pvParameter)
 void vSensorTask(void *pvParameter)
 {
 
-  sensor_t sensorCurrent;
+  
   currentCalibration(20);
+
   ESP_LOGI(TAG, "Iniciando task leitura sensor SCT013 50A/1V...");
-  int adjust = 0;
+  
 
   while (1)
   {
 
     ESP_LOGI(TAG, "Lendo dados de Consumo de Energia...\n");
 
-    while (adjust < 20)
-    {
-      sensorCurrent.irms = getIrms(1480);
-      adjust++;
-    }
-    
     ESP_LOGI(TAG, "Calculando a corrente Irms...\n");
     sensorCurrent.irms = getIrms(1480);
     
@@ -286,14 +286,14 @@ void vSensorTask(void *pvParameter)
    
     //Com o reajuste de 2020, preço por kWh na CPFL Paulista é em torno de R$ 0,85 por kWh para a tarifa residencial
     ESP_LOGI(TAG, "Calculando Custo por KWh Consumido...\n");
-    //sensorCurrent.cost = sensorCurrent.kwh * 0.85;
-    costKwh = sensorCurrent.kwh * 0.85;
-    sumCost += costKwh;
-    sensorCurrent.cost = sumCost;
+    sensorCurrent.cost = sensorCurrent.kwh * 0.85;
+    //costKwh = sensorCurrent.kwh * 0.85;
+    //sumCost += costKwh;
+    //sensorCurrent.cost = sumCost;
 
     ESP_LOGI(TAG2, "Read IRMS Value: %lf (A) | kWh Value: %f (kWh) | Cost per kWh : R$ %f", sensorCurrent.irms, sensorCurrent.kwh, sensorCurrent.cost);
 
-    if (!xQueueSend(xSensor_Control, &sensorCurrent, 3000))
+    if (!xQueueSend(xSensor_Control, (void *)&sensorCurrent, 3000))
     {
       ESP_LOGI(TAG, "\nFalha ao enviar o valor para a fila xSensor_Control.\n");
     }
@@ -473,7 +473,7 @@ void app_main()
   mqtt_init();
 
   //criação de fila do xSensor_Control (vSensorTask <--> vPublishTask)
-  xSensor_Control = xQueueCreate(10, sizeof(int));
+  xSensor_Control = xQueueCreate(10, sizeof(struct sensor));
   if (xSensor_Control == NULL)
   {
     ESP_LOGI(TAG1, "Erro na criação da Queue.\n");
