@@ -180,7 +180,7 @@ void currentCalibration(double _ICAL)
   offsetI = ADC_COUNTS >> 1;
   int adjust = 0;
   
-  while (adjust < 20)
+  while (adjust < 250)
   {
     getIrms(1480);
     adjust++;
@@ -267,7 +267,7 @@ void vSensorTask(void *pvParameter)
 {
 
   
-  currentCalibration(20);
+  currentCalibration(23);
 
   ESP_LOGI(TAG, "Iniciando task leitura sensor SCT013 50A/1V...");
   
