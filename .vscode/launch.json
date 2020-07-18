@@ -12,7 +12,7 @@
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug",
-            "executable": "c:/Users/Usuario/Documents/workspace/proj_esp32_energy_consumption/.pio/build/esp32doit-devkit-v1/firmware.elf",
+            "executable": "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/.pio/build/esp32doit-devkit-v1/firmware.elf",
             "toolchainBinDir": "C:/Users/Usuario/.platformio/packages/toolchain-xtensa32/bin",
             "preLaunchTask": {
                 "type": "PlatformIO",
@@ -24,7 +24,7 @@
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug (skip Pre-Debug)",
-            "executable": "c:/Users/Usuario/Documents/workspace/proj_esp32_energy_consumption/.pio/build/esp32doit-devkit-v1/firmware.elf",
+            "executable": "C:/Users/Usuario/Documents/projetos_git/proj_esp32_energy_consumption/.pio/build/esp32doit-devkit-v1/firmware.elf",
             "toolchainBinDir": "C:/Users/Usuario/.platformio/packages/toolchain-xtensa32/bin",
             "internalConsoleOptions": "openOnSessionStart"
         }

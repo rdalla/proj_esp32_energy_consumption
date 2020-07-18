@@ -280,9 +280,9 @@ void vSensorTask(void *pvParameter)
     ESP_LOGI(TAG, "Calculando a corrente Irms...\n");
     sensorCurrent.irms = getIrms(1480);
     
-    //Consumed = (Pot[W]/1000) x hours...(5seg/3600)= 0,00138889 hour
+    //Consumed = (Pot[W]/1000) x hours...Sent a packet in a interval of 5 seconds .: kwh = ((Irms * Volts * 5 seconds) / (1000 * 3600))
     ESP_LOGI(TAG, "Calculando KWh Consumido...\n");
-    sensorCurrent.kwh = (float)(((sensorCurrent.irms * 127.0) / 1000.0) * (0.00138889)); 
+    sensorCurrent.kwh = (float)((sensorCurrent.irms * 127.0 * 5) / (1000.0 * 3600.0)); 
    
     //Com o reajuste de 2020, preço por kWh na CPFL Paulista é em torno de R$ 0,85 por kWh para a tarifa residencial
     ESP_LOGI(TAG, "Calculando Custo por KWh Consumido...\n");
