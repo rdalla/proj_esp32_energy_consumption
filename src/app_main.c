@@ -287,7 +287,7 @@ void vPublishTask(void *pvParameter)
     snprintf(mqtt_buffer, 128, "%f", sensorReceived.cost);
     esp_mqtt_client_publish(mqtt_client, cost_topic, mqtt_buffer, 0, 0, 0);
 
-    vTaskDelay(20000 / portTICK_PERIOD_MS);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -323,18 +323,18 @@ void vSensorTask(void *pvParameter)
     1676 (300 ms).
     */
 
-    //Consumed = (Pot[W]/1000) x hours...Sent a packet in a interval of 20 seconds .: kwh = ((Irms * Volts * 20 seconds) / (1000 * 3600))
+    //Consumed = (Pot[W]/1000) x hours...Sent a packet in a interval of 5 seconds .: kwh = ((Irms * Volts * 5 seconds) / (1000 * 3600))
     ESP_LOGI(TAG, "Calculando KWh Consumido...\n");
-    //sensorCurrent.kwh = (float)((sensorCurrent.irms * 127.0 * 20) / (1000.0 * 3600.0));
-    kwhValue = (float)((sensorCurrent.irms * 127.0 * 20) / (1000.0 * 3600.0));
-    sumKwh += kwhValue;
-    sensorCurrent.kwh = sumKwh;
+    //sensorCurrent.kwh = (float)((sensorCurrent.irms * 127.0 * 5) / (1000.0 * 3600.0));
+    kwhValue = (float)((sensorCurrent.irms * 127.0 * 5) / (1000.0 * 3600.0));
 
-    //Com o reajuste de 2020, preço por kWh na CPFL Paulista é em torno de R$ 0,85 por kWh para a tarifa residencial
     ESP_LOGI(TAG, "Calculando Custo por KWh Consumido...\n");
-    //sensorCurrent.cost = sensorCurrent.kwh * 0.85;
-    costKwh = sensorCurrent.kwh * 0.85;
+    costKwh = kwhValue * 0.85; // CPFL Tarif 2020 R$ 0.85
+
+    sumKwh += kwhValue;
     sumCost += costKwh;
+
+    sensorCurrent.kwh = sumKwh;
     sensorCurrent.cost = sumCost;
 
     ESP_LOGI(TAG2, "Read IRMS Value: %lf (A) | kWh Value: %f (kWh) | Cost per kWh : R$ %f", sensorCurrent.irms, sensorCurrent.kwh, sensorCurrent.cost);
@@ -344,7 +344,7 @@ void vSensorTask(void *pvParameter)
       ESP_LOGI(TAG, "\nFalha ao enviar o valor para a fila xSensor_Control.\n");
     }
 
-    vTaskDelay(20000 / portTICK_RATE_MS);
+    vTaskDelay(5000 / portTICK_RATE_MS);
   }
 }
 
