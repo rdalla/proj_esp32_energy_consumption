@@ -1,3 +1,11 @@
+//--------------------------------------------------------------------------------------
+//  Faculdade:  UNISAL Sao Jose
+//  Projeto:    TCC Pos Graduacao Eletronica Embarcada
+//  Author:     Roberto Dalla Valle Filho
+//  RA:         180008380
+//--------------------------------------------------------------------------------------
+
+//--------------------------------------------------------------------------------------
 //Bibliotecas C
 
 #include <stdio.h>
@@ -6,6 +14,7 @@
 #include <string.h>
 #include <math.h>
 
+//--------------------------------------------------------------------------------------
 //Bibliotecas do ESP32
 
 #include <esp_wifi.h>
@@ -18,6 +27,7 @@
 #include "driver/gpio.h"
 #include "esp_adc_cal.h"
 
+//--------------------------------------------------------------------------------------
 //Bibliotecas do FreeRTOS
 
 #include "freertos/FreeRTOS.h"
@@ -26,22 +36,21 @@
 #include "freertos/semphr.h"
 #include "freertos/event_groups.h"
 
+//--------------------------------------------------------------------------------------
 //Bibliotecas de rede
 
 #include <lwip\sockets.h>
 #include <lwip\dns.h>
 #include <lwip\netdb.h>
 
+//--------------------------------------------------------------------------------------
 
-#define ID1                   "DallaValle_ESP32_LEITURA_SENSOR"
-#define DEFAULT_VREF          1100     //Use adc2_vref_to_gpio() to obtain a better estimate
-#define NO_OF_SAMPLES         64      //Multisampling
+#define ID1                   "DallaValle_ESP32_LEITURA_SENSOR"   //Identification
+#define DEFAULT_VREF          1100                                //Vref Default
+#define ADC_BITS              12                                  //Quantity of bit ESP32 ADC1
+#define ADC_COUNTS            (1 << ADC_BITS)                     //Left Shift Raized 2 times .: ADC_COUNTS = 24
 
-#define ADC_BITS 12
-
-#define ADC_COUNTS (1 << ADC_BITS)
-
-//-----------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 //ESP32 ADC CONFIG
 
 #if CONFIG_IDF_TARGET_ESP32
@@ -54,61 +63,61 @@ static const adc_bits_width_t width = ADC_WIDTH_BIT_13;
 #endif
 static const adc_atten_t atten = ADC_ATTEN_DB_11; //11 dB attenuation (ADC_ATTEN_DB_11) gives full-scale voltage 3.9 V (see note below)
 static const adc_unit_t unit = ADC_UNIT_1;
-//-----------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 
 //--------------------------------------------------------------------------------------
-// Variable declaration for emon_calc procedure
+// Declarações de Variaveis
 //--------------------------------------------------------------------------------------
-int sampleV; //sample_ holds the raw analog read value
 int sampleI;
+unsigned int samples;
 
-double lastFilteredV, filteredV; //Filtered_ is the raw analog value minus the DC offset
-double filteredI;
-double offsetV; //Low-pass filter output
-double offsetI; //Low-pass filter output
 double Irms;
-double phaseShiftedV; //Holds the calibrated phase shifted voltage.
+double filteredI;                //Filtered_ is the raw analog value minus the DC offset
+double offsetI;                  //Low-pass filter output
+double ICAL;                     //Calibration coefficient. Need to be set in order to obtain accurate results
+double sqI, sumI;
 
-double sqV, sumV, sqI, sumI, instP, sumP; //sq = squared, sum = Sum, inst = instantaneous
+float kwhValue = 0.0;
+float sumKwh = 0.0;
 float sumCost = 0.0;
 float costKwh = 0.0;
 
-int startV; //Instantaneous voltage at start of sample window.
-
-bool lastVCross, checkVCross; //Used to measure number of times threshold is crossed.
-
-//Set Voltage and current input pins
-unsigned int inPinV;
-unsigned int inPinI;
-unsigned int samples;
-
-//Calibration coefficients
-//These need to be set in order to obtain accurate results
-double VCAL;
-double ICAL;
-double PHASECAL;
-
+//--------------------------------------------------------------------------------------
+// Protótipos das funções de calculo de Irms
+//--------------------------------------------------------------------------------------
 void currentCalibration(double _ICAL);
 double getIrms(int NUMBER_OF_SAMPLES);
 
+//--------------------------------------------------------------------------------------
 /*handle do Queue*/
+//--------------------------------------------------------------------------------------
+
 QueueHandle_t xSensor_Control = 0;
 
+//--------------------------------------------------------------------------------------
 /* Variáveis para Armazenar o handle da Task */
+//--------------------------------------------------------------------------------------
 TaskHandle_t xPublishTask;
 TaskHandle_t xSensorTask;
 
+//--------------------------------------------------------------------------------------
 /*Prototipos das Tasks*/
+//--------------------------------------------------------------------------------------
 void vPublishTask(void *pvParameter);
 void vSensorTask(void *pvParameter);
 
+//--------------------------------------------------------------------------------------
 //Inicializacao de TAGs
+//--------------------------------------------------------------------------------------
 static const char *TAG = "MQTT_IOT";
 static const char *TAG1 = "TASK";
 static const char *TAG2 = "sensor";
 static const char *TAG3 = "ADC_ESP32";
+
+//--------------------------------------------------------------------------------------
 // MQTT
-const char* mqtt_server = "192.168.1.101";//IP do BBB MQTT broker
+//--------------------------------------------------------------------------------------
+const char *mqtt_server = "192.168.1.101"; //IP do BBB MQTT broker
 const char* mqtt_username = "rdalla"; // MQTT username
 const char* mqtt_password = "vao1ca"; // MQTT password
 const char* clientID = "DallaValleESP32"; // MQTT client ID
@@ -118,13 +127,17 @@ const char* kwh_topic = "home/sensor/kwh";
 const char* cost_topic = "home/sensor/cost";
 char mqtt_buffer[128];
 
-
+//--------------------------------------------------------------------------------------
 /* estrutura de dados para o sensor */
-struct sensor {
-    double irms;
-    float kwh;
-    float cost;
+//--------------------------------------------------------------------------------------
+struct sensor
+{
+  double irms;
+  float kwh;
+  float cost;
 } sensorCurrent;
+
+//--------------------------------------------------------------------------------------
 
 #if CONFIG_IDF_TARGET_ESP32
 static void check_efuse(void)
@@ -166,13 +179,24 @@ static void print_char_val_type(esp_adc_cal_value_t val_type)
   }
 }
 #endif
+//--------------------------------------------------------------------------------------
 
+//--------------------------------------------------------------------------------------
 //Referencia para saber status de conexao
+//--------------------------------------------------------------------------------------
+
 static EventGroupHandle_t wifi_event_group;
 const static int CONNECTION_STATUS = BIT0;
 
+//--------------------------------------------------------------------------------------
 //Cliente MQTT
+//--------------------------------------------------------------------------------------
+
 esp_mqtt_client_handle_t mqtt_client;
+
+//--------------------------------------------------------------------------------------
+// Funcao Calibracao do Sensor de Corrente
+//--------------------------------------------------------------------------------------
 
 void currentCalibration(double _ICAL)
 {
@@ -188,6 +212,10 @@ void currentCalibration(double _ICAL)
   }
 
 }
+
+//--------------------------------------------------------------------------------------
+// Funcao de acquisicao do valor Irms
+//--------------------------------------------------------------------------------------
 
 double getIrms(int NUMBER_OF_SAMPLES)
 {
@@ -222,10 +250,13 @@ double getIrms(int NUMBER_OF_SAMPLES)
   return Irms;
 }
 
-//---------------------------------------------------------------------------
-//Espaco para criacao de tasks para o FreeRTOS
+//--------------------------------------------------------------------------------------
+//Tasks FreeRTOS
+//--------------------------------------------------------------------------------------
 
+//--------------------------------------------------------------------------------------
 /* Task de Publish MQTT */
+//--------------------------------------------------------------------------------------
 void vPublishTask(void *pvParameter)
 {
 
@@ -260,9 +291,9 @@ void vPublishTask(void *pvParameter)
   }
 }
 
-
-
+//--------------------------------------------------------------------------------------
 /* Task do sensor SCT013 */
+//--------------------------------------------------------------------------------------
 void vSensorTask(void *pvParameter)
 {
 
@@ -278,18 +309,33 @@ void vSensorTask(void *pvParameter)
     ESP_LOGI(TAG, "Lendo dados de Consumo de Energia...\n");
 
     ESP_LOGI(TAG, "Calculando a corrente Irms...\n");
-    sensorCurrent.irms = getIrms(1480);
-    
+    sensorCurrent.irms = getIrms(1676);
+    /*
+    Useful values to use as a parameter into calcIrms( ) are:
+
+    1 cycle of mains:
+    112 for a 50 Hz system, or 93 for a 60 Hz system.
+
+    The smallest ‘universal’ number:
+    559 (100 ms, or 5 cycles of 50 Hz or 6 cycles of 60 Hz).
+
+    The recommended monitoring period:
+    1676 (300 ms).
+    */
+
     //Consumed = (Pot[W]/1000) x hours...Sent a packet in a interval of 5 seconds .: kwh = ((Irms * Volts * 5 seconds) / (1000 * 3600))
     ESP_LOGI(TAG, "Calculando KWh Consumido...\n");
-    sensorCurrent.kwh = (float)((sensorCurrent.irms * 127.0 * 5) / (1000.0 * 3600.0)); 
-   
+    //sensorCurrent.kwh = (float)((sensorCurrent.irms * 127.0 * 5) / (1000.0 * 3600.0));
+    kwhValue = (float)((sensorCurrent.irms * 127.0 * 5) / (1000.0 * 3600.0));
+    sumKwh += kwhValue;
+    sensorCurrent.kwh = sumKwh;
+
     //Com o reajuste de 2020, preço por kWh na CPFL Paulista é em torno de R$ 0,85 por kWh para a tarifa residencial
     ESP_LOGI(TAG, "Calculando Custo por KWh Consumido...\n");
-    sensorCurrent.cost = sensorCurrent.kwh * 0.85;
-    //costKwh = sensorCurrent.kwh * 0.85;
-    //sumCost += costKwh;
-    //sensorCurrent.cost = sumCost;
+    //sensorCurrent.cost = sensorCurrent.kwh * 0.85;
+    costKwh = sensorCurrent.kwh * 0.85;
+    sumCost += costKwh;
+    sensorCurrent.cost = sumCost;
 
     ESP_LOGI(TAG2, "Read IRMS Value: %lf (A) | kWh Value: %f (kWh) | Cost per kWh : R$ %f", sensorCurrent.irms, sensorCurrent.kwh, sensorCurrent.cost);
 
@@ -302,9 +348,9 @@ void vSensorTask(void *pvParameter)
   }
 }
 
-//---------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 //Callback para tratar eventos MQTT
-
+//--------------------------------------------------------------------------------------
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
 {
   // Connect to MQTT Broker
@@ -354,9 +400,9 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
   return ESP_OK;
 }
 
-//---------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 //Callback para tratar eventos WiFi
-
+//--------------------------------------------------------------------------------------
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 {
 
@@ -381,10 +427,9 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
   return ESP_OK;
 }
 
-
-//---------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 //Inicializacao WiFi
-
+//--------------------------------------------------------------------------------------
 static void wifi_init(void)
 {
 
@@ -409,9 +454,9 @@ static void wifi_init(void)
   xEventGroupWaitBits(wifi_event_group, CONNECTION_STATUS, false, true, portMAX_DELAY);
 }
 
-//---------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 //Inicializacao MQTT Service
-
+//--------------------------------------------------------------------------------------
 static void mqtt_init(void)
 {
   const esp_mqtt_client_config_t mqtt_cfg = {
@@ -429,9 +474,9 @@ static void mqtt_init(void)
 
 }
 
-//---------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------
 //APP_MAIN
-
+//--------------------------------------------------------------------------------------
 void app_main()
 {
 
