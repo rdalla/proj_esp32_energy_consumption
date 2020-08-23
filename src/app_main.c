@@ -228,12 +228,12 @@ double getIrms(int NUMBER_OF_SAMPLES)
   {
     sampleI = adc1_get_raw((adc1_channel_t)channel);
 
-    // Digital low pass filter extracts the 2.5 V or 1.65 V dc offset,
-    // then subtract this - signal is now centered on 0 counts.
+    // O filtro passa-baixa digital extrai o 1.65 VDC offset,
+    //subtraia isso - o sinal agora está centrado em 0 contagens.
     offsetI = (offsetI + (sampleI - offsetI) / ADC_COUNTS);
     filteredI = sampleI - offsetI;
 
-    // Root-mean-square method current
+    // Corrente RMS
     // 1) square current values
     sqI = filteredI * filteredI;
     // 2) sum
@@ -311,15 +311,15 @@ void vSensorTask(void *pvParameter)
     ESP_LOGI(TAG, "Calculando a corrente Irms...\n");
     sensorCurrent.irms = getIrms(1676);
     /*
-    Useful values to use as a parameter into calcIrms( ) are:
+    Os valores úteis para usar como parâmetro em calcIrms () são:
 
-    1 cycle of mains:
-    112 for a 50 Hz system, or 93 for a 60 Hz system.
+    1 ciclo:
+    112 para sistemas 50 Hz , ou 93 para sistemas 60 Hz.
+    
+    O menor número ‘universal’:
+    559 (100 ms, ou 5 ciclos de 50 Hz ou 6 ciclos de 60 Hz).
 
-    The smallest ‘universal’ number:
-    559 (100 ms, or 5 cycles of 50 Hz or 6 cycles of 60 Hz).
-
-    The recommended monitoring period:
+    O período de monitoramento recomendado:
     1676 (300 ms).
     */
 
