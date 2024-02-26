@@ -344,7 +344,7 @@ void vSensorTask(void *pvParameter)
       ESP_LOGI(TAG, "\nFalha ao enviar o valor para a fila xSensor_Control.\n");
     }
 
-    vTaskDelay(5000 / portTICK_RATE_MS);
+    vTaskDelay(pdMS_TO_TICKS(5000));
   }
 }
 
